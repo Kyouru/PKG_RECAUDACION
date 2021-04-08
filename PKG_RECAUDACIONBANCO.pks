@@ -11,7 +11,14 @@ CREATE OR REPLACE PACKAGE SISGODBA.PKG_RECAUDACIONBANCO IS
 -- 01.06.2020 - Juan Salazar C. - Se agregaron tres parametros en el procedimiento P_GEN_CANCELACUOTA
 --                                PIPeriodosolicitud, PINumerosolicitud, PITipopago, PINumerocuota
 -- 03.12.2020 - Kenji Jhoncon -  Se agrega P_GEN_CARGAGLOBOKAS y P_GEN_CARGAINTERBANK. Ajuste P_GEN_CANCELACUOTA y P_GEN_PAGOPRESTAMOS por redondeo globokas, diferencia queda en AHV.
+-- 09.03.2021 - Kenji Jhoncon -  Correccion en P_GEN_CARGAGLOBOKAS, segmentaba mal la trama.
+-- 07.04.2021 - Kenji Jhoncon -  Se agrega P_GEN_CARGABANCONACION.
 -- 
+PROCEDURE P_GEN_CARGABANCONACION( PIDirectorio    VARCHAR2,
+                            PINombreArchivo VARCHAR2,
+			PIFechaProceso IN DATE:=SYSDATE
+                          );
+--
 PROCEDURE P_GEN_CARGAINTERBANK( PIDirectorio    VARCHAR2,
                             PINombreArchivo VARCHAR2,
 			PIFechaProceso IN DATE:=SYSDATE

@@ -11,7 +11,315 @@ CREATE OR REPLACE PACKAGE BODY SISGODBA.PKG_RECAUDACIONBANCO IS
 -- 01.06.2020 - Juan Salazar C. - Se agregaron tres parametros en el procedimiento P_GEN_CANCELACUOTA
 --                                PIPeriodosolicitud, PINumerosolicitud, PITipopago, PINumerocuota
 -- 03.12.2020 - Kenji Jhoncon -  Se agrega P_GEN_CARGAGLOBOKAS y P_GEN_CARGAINTERBANK. Ajuste P_GEN_CANCELACUOTA y P_GEN_PAGOPRESTAMOS por redondeo globokas, diferencia queda en AHV.
+-- 09.03.2021 - Kenji Jhoncon -  Correccion en P_GEN_CARGAGLOBOKAS, segmentaba mal la trama.
+-- 07.04.2021 - Kenji Jhoncon -  Se agrega P_GEN_CARGABANCONACION.
 -- 
+
+PROCEDURE P_GEN_CARGABANCONACION ( PIDirectorio    VARCHAR2,
+                            PINombreArchivo VARCHAR2,
+                            PIFechaProceso IN DATE:=SYSDATE
+                          ) IS
+
+    in_file    UTL_FILE.FILE_TYPE;
+    linebuf             VARCHAR2(1000);
+    vRecauda            recaudacionbanco%ROWTYPE;
+    vValidaTrama        NUMBER;
+    cFechaProceso       DATE                := SYSDATE;
+    vNumerocuota        prestamocuotas.numerocuota%TYPE;
+
+    vOrdenCobro         VARCHAR(12);                        --Variable que retorna, contiene ACT/ATR - Fecha envio (YYYYMMDD)
+    cIdentificador      VARCHAR(7)          := '0180100';   --Codigo Banco + Cliente
+
+BEGIN
+    in_file := UTL_FILE.FOPEN( PIDirectorio, PINombreArchivo, 'r');
+    
+    LOOP
+        UTL_FILE.GET_LINE (in_file, linebuf);
+        
+        linebuf := trim(linebuf);
+        IF linebuf IS NOT NULL AND SUBSTR(linebuf, 1, LENGTH(cIdentificador)) = cIdentificador THEN
+        
+            SELECT COUNT(*)
+            INTO vValidaTrama
+            FROM recaudacionbanco
+            WHERE REPLACE(TRIM(trama), ' ', '') =  REPLACE(TRIM(linebuf), ' ', '');
+
+            IF vValidaTrama = 0 AND LENGTH(linebuf) > 100 THEN
+
+                vRecauda.trama                  := linebuf;
+                vRecauda.fechacarga             := cFechaProceso;
+                vRecauda.usuariocarga           := USER;
+                vRecauda.codigobanco            := 5;        -- Codigo Banco en Datosbanco -- Scotiabank
+
+                BEGIN
+                    vRecauda.periodosolicitud   := SUBSTR(linebuf, 2, 4);
+                    vRecauda.numerosolicitud    := TO_NUMBER(SUBSTR(linebuf, 6, 7));
+
+                    vRecauda.numerocuota        := SUBSTR(linebuf, 13, 4);
+
+                    --Situacion de pago
+                    ----SUBSTR(linebuf, 17, 2);
+
+                    vRecauda.moneda             := SUBSTR(linebuf, 19, 1); --1:Soles 2:Dolares
+
+                    vRecauda.codigosocio        := PKG_PERSONA.F_OBT_CIP(PKG_PRESTAMO.F_OBT_CODIGOPERSONA(vRecauda.numerosolicitud, vRecauda.periodosolicitud));
+
+                    --Nombre Cliente Retorna
+                    ----SUBSTR(linebuf, 20, 60);
+                    ----PKG_PRESTAMO.F_OBT_CODIGOPERSONA(vRecauda.periodosolicitud, vRecauda.numerosolicitud)
+                    vRecauda.nombrecliente      := PKG_PERSONA.F_OBT_NOMBRECOMPLETO(PKG_PRESTAMO.F_OBT_CODIGOPERSONA(vRecauda.numerosolicitud, vRecauda.periodosolicitud));
+
+                    --Importe Cuota
+                    vRecauda.importeorigen      := TO_NUMBER(SUBSTR(linebuf, 80, 15)) / 100;
+
+                    vRecauda.fechavencimiento   := TO_DATE  (
+                                                            SUBSTR(linebuf, 95, 4)||'-'||
+                                                            SUBSTR(linebuf, 99, 2)||'-'||
+                                                            SUBSTR(linebuf, 101, 2),
+                                                            'YYYY-MM-DD'
+                                                            );
+
+                    --Indicador de la Tasa
+                    ----SUBSTR(linebuf, 103, 1);
+
+                    --Factor Mora
+                    ----TO_NUMBER(SUBSTR(linebuf, 104, 15)) / 100;
+
+                    --Factor Compensatorio
+                    ----TO_NUMBER(SUBSTR(linebuf, 119, 15)) / 100;
+
+                    --Importe Gastos
+                    ----TO_NUMBER(SUBSTR(linebuf, 134, 15)) / 100;
+
+                    --Cuenta Cliente
+                    ----SUBSTR(linebuf, 149, 11);
+
+                    --Orden Cobro. Variable que retorna, contiene ACT/ATR - Fecha envio (YYYYMMDD)
+                    --vOrdenCobro                 := SUBSTR(linebuf, 160, 12);
+                    vOrdenCobro                 := '00000' || SUBSTR(linebuf, 73, 7);
+
+                    /*vRecauda.tipopago           := 'ATR';
+                    vRecauda.fechaenvio         := TO_DATE   ('2021-03-26',
+                                                            'YYYY-MM-DD'
+                                                            );
+                    */
+                    vRecauda.tipopago           :=  CASE SUBSTR(vOrdenCobro, 6, 1)
+                                                        WHEN 1 THEN
+                                                            'ACT'
+                                                        WHEN 2 THEN
+                                                            'ATR'
+                                                    END;
+                    vRecauda.fechaenvio         :=  TO_DATE   (
+                                                            SUBSTR(vOrdenCobro, 7, 2)||'-'||
+                                                            SUBSTR(vOrdenCobro, 9, 2)||'-'||
+                                                            SUBSTR(vOrdenCobro, 11, 2),
+                                                            'YY-MM-DD'
+                                                            );
+
+                    --Mora
+                    ----TO_NUMBER(SUBSTR(linebuf, 172, 15)) / 100;
+                    vRecauda.importemora        := 0;
+
+                    --Compensacion
+                    ----TO_NUMBER(SUBSTR(linebuf, 187, 15)) / 100;
+
+                    --Importe Cobrado
+                    vRecauda.importedepositado  := TO_NUMBER(SUBSTR(linebuf, 202, 15)) / 100;
+
+                    --Agencia de cobro
+                    ----SUBSTR(linebuf, 217, 4);
+                    vRecauda.oficinapago        := SUBSTR(linebuf, 217, 4);
+
+                    vRecauda.fechapago          := TO_DATE  (
+                                                            SUBSTR(linebuf, 221, 4) || '-' ||
+                                                            SUBSTR(linebuf, 225, 2) || '-' ||
+                                                            SUBSTR(linebuf, 227, 2)
+                                                            , 'YYYY-MM-DD'
+                                                            );
+                    
+                    --Hora Cobro HHMMSS
+                    vRecauda.nromovimiento      := SUBSTR(linebuf, 229, 6);
+
+                    vRecauda.referencias        := vRecauda.codigosocio||vRecauda.tipopago||vRecauda.nromovimiento;
+
+                    --Espacios Vacios
+                    ----SUBSTR(linebuf, 235, 60);
+
+                    vRecauda.numerocuentabanco  := PKG_DATOSBANCO.F_OBT_CUENTABANCORECAUDA(vRecauda.codigobanco, vRecauda.moneda);
+
+                    BEGIN
+                        PKG_RECAUDACIONBANCO.P_OBT_VERIFICARDEBITOAUTO(vRecauda.periodosolicitud, vRecauda.numerosolicitud, vRecauda.debitoautomatico);
+                        vRecauda.estado := '1';
+                    EXCEPTION WHEN OTHERS THEN
+                        RAISE_APPLICATION_ERROR(-20120,'  vRecauda.estado  ' || vRecauda.estado  );
+                    END;
+                    
+                    IF vRecauda.tipopago = 'ACT' THEN
+                        BEGIN
+                            SELECT MIN(numerocuota)
+                                INTO vNumerocuota
+                                FROM prestamocuotas 
+                            WHERE periodosolicitud = vRecauda.periodosolicitud 
+                                AND numerosolicitud =  vRecauda.numerosolicitud 
+                                AND estado = 2;
+                        EXCEPTION WHEN OTHERS THEN
+                           vNumerocuota := NULL;       
+                    END; 
+                    --
+                    vRecauda.cuotacronograma := vNumerocuota;
+                    --
+                    vRecauda.amortizacion   := PKG_PRESTAMOCUOTAS.F_OBT_AMORTIZACION(   vRecauda.numerosolicitud, 
+                                                                                        vRecauda.periodosolicitud, 
+                                                                                        vNumerocuota);
+                    --
+                    vRecauda.interes        := PKG_PRESTAMOCUOTAS.F_OBT_INTERES(    vRecauda.numerosolicitud,
+                                                                                    vRecauda.periodosolicitud, 
+                                                                                    vNumerocuota );
+                    vRecauda.mora           := 0;
+                    -- 
+                    vRecauda.reajuste       := PKG_PRESTAMOCUOTAS.F_OBT_REAJUSTE(   vRecauda.numerosolicitud, 
+                                                                                    vRecauda.periodosolicitud, 
+                                                                                    vNumerocuota);
+                    -- 
+                    vRecauda.portes         := PKG_PRESTAMOCUOTAS.F_OBT_PORTES(     vRecauda.numerosolicitud, 
+                                                                                    vRecauda.periodosolicitud, 
+                                                                                    vNumerocuota);
+                    --
+                    vRecauda.segurointeres  := PKG_PRESTAMOCUOTAS.F_OBT_SEGUROINTERES(  vRecauda.numerosolicitud, 
+                                                                                        vRecauda.periodosolicitud, 
+                                                                                        vNumerocuota); 
+                     
+                    ELSIF vRecauda.tipopago = 'ATR' THEN
+                            SELECT SUM(SALDOCAPITAL)
+                            INTO vRecauda.amortizacion
+                            FROM TABLE( CRE08070.DEUDACUOTASSIP(    vRecauda.periodosolicitud, 
+                                                                    vRecauda.numerosolicitud, 
+                                                                    vRecauda.fechaenvio ) ) 
+                            WHERE FECHAVENCIMIENTO <= vRecauda.fechaenvio
+                            AND (SALDOCAPITAL+SALDOINTERES+SALDOMORA)>0;
+                            --                                                         
+                            vRecauda.interes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOINTERES(    vRecauda.periodosolicitud, 
+                                                                                                    vRecauda.numerosolicitud, 
+                                                                                                    vRecauda.fechaenvio );
+                            --
+                            vRecauda.mora            := PKG_RECAUDACIONBANCO.F_OBT_SALDOMORA(   vRecauda.periodosolicitud, 
+                                                                                                vRecauda.numerosolicitud, 
+                                                                                                vRecauda.fechaenvio );
+                            --
+                            vRecauda.reajuste       := PKG_RECAUDACIONBANCO.F_OBT_SALDOREAJUSTE(    vRecauda.periodosolicitud, 
+                                                                                                    vRecauda.numerosolicitud, 
+                                                                                                    vRecauda.fechaenvio );
+                            -- 
+                            vRecauda.portes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOPORTES(  vRecauda.periodosolicitud, 
+                                                                                                vRecauda.numerosolicitud, 
+                                                                                                vRecauda.fechaenvio );
+                            --
+                            vRecauda.segurointeres  := PKG_RECAUDACIONBANCO.F_OBT_SALDOSEGUROINTERES(   vRecauda.periodosolicitud, 
+                                                                                                        vRecauda.numerosolicitud, 
+                                                                                                        vRecauda.fechaenvio );
+                    END IF;
+
+                    vRecauda.totalcuota         :=  NVL(vRecauda.amortizacion, 0) +
+                                                    NVL(vRecauda.interes, 0) +
+                                                    NVL(vRecauda.mora, 0) +
+                                                    NVL(vRecauda.reajuste, 0) +
+                                                    NVL(vRecauda.portes, 0) +
+                                                    NVL(vRecauda.segurointeres, 0);
+                    --
+                    IF vRecauda.numerocuota <> vRecauda.cuotacronograma THEN
+                        vRecauda.observaciones     := vRecauda.observaciones || ' CUOTAS DIFERENTES ' || CHR(9);
+                    END IF;
+
+                    IF vRecauda.importeorigen <> vRecauda.totalcuota THEN
+                        vRecauda.observaciones     := vRecauda.observaciones || ' IMPORTES DIFERENTES ' || CHR(9);
+                    END IF;
+
+                    BEGIN
+                        INSERT INTO recaudacionbanco(   fechacarga,
+                                                        usuariocarga,
+                                                        codigosocio,
+                                                        nombrecliente,
+                                                        referencias,
+                                                        importeorigen,
+                                                        importedepositado,
+                                                        importemora,
+                                                        oficinapago,
+                                                        nromovimiento,
+                                                        fechapago,
+                                                        tipopago,
+                                                        estado,
+                                                        codigobanco,
+                                                        numerocuentabanco,
+                                                        periodosolicitud,
+                                                        numerosolicitud,
+                                                        moneda,
+                                                        numerocuota,
+                                                        fechavencimiento,
+                                                        amortizacion,
+                                                        interes,
+                                                        mora,
+                                                        reajuste,
+                                                        portes,
+                                                        segurointeres,
+                                                        fechaproceso,
+                                                        usuarioproceso,
+                                                        trama,
+                                                        fechaenvio,
+                                                        debitoautomatico,
+                                                        cuotacronograma,
+                                                        totalcuota,
+                                                        observaciones
+                                                    )
+                            VALUES (    vRecauda.fechacarga,
+                                        vRecauda.usuariocarga,
+                                        vRecauda.codigosocio,
+                                        vRecauda.nombrecliente,
+                                        vRecauda.referencias,
+                                        vRecauda.importeorigen,
+                                        vRecauda.importedepositado,
+                                        vRecauda.importemora,
+                                        vRecauda.oficinapago,
+                                        vRecauda.nromovimiento,
+                                        vRecauda.fechapago,
+                                        vRecauda.tipopago,
+                                        vRecauda.estado,
+                                        vRecauda.codigobanco,
+                                        vRecauda.numerocuentabanco,
+                                        vRecauda.periodosolicitud,
+                                        vRecauda.numerosolicitud,
+                                        vRecauda.moneda,
+                                        vRecauda.numerocuota,
+                                        vRecauda.fechavencimiento,
+                                        vRecauda.amortizacion,
+                                        vRecauda.interes,
+                                        vRecauda.mora,
+                                        vRecauda.reajuste,
+                                        vRecauda.portes,
+                                        vRecauda.segurointeres,
+                                        vRecauda.fechaproceso,
+                                        vRecauda.usuarioproceso,
+                                        vRecauda.trama,
+                                        vRecauda.fechaenvio,
+                                        vRecauda.debitoautomatico,
+                                        vRecauda.cuotacronograma,
+                                        vRecauda.totalcuota,
+                                        vRecauda.observaciones
+                                    );
+                        COMMIT;
+                    END;
+                END;
+            END IF;
+        END IF;
+    END LOOP;
+
+  EXCEPTION WHEN NO_DATA_FOUND THEN
+      UTL_FILE.FCLOSE (in_file);
+  WHEN OTHERS THEN
+      RAISE_APPLICATION_ERROR(-20300,'Error CargaLiquidacion: '||SQLERRM);
+
+  UTL_FILE.FCLOSE (in_file);
+END P_GEN_CARGABANCONACION;
+
 PROCEDURE P_GEN_CARGAINTERBANK( PIDirectorio    VARCHAR2,
                             PINombreArchivo VARCHAR2,
                             PIFechaProceso IN DATE:=SYSDATE
@@ -86,7 +394,7 @@ BEGIN
 
               cRecauda.importemora    := TO_NUMBER(SUBSTR(linebuf, 110, 7));
               
-                    cRecauda.oficinapago    := 0;
+              cRecauda.oficinapago    := 0;
 
               cRecauda.nromovimiento    := SUBSTR(linebuf, 140, 8);
 
@@ -113,8 +421,6 @@ BEGIN
 
               --cRecauda.fechaproceso     := TO_DATE(SUBSTR(linebuf, 105, 2) || '/' || SUBSTR(linebuf, 103, 2) || '/' || SUBSTR(linebuf, 99, 4), 'DD/MM/RRRR');
               --cRecauda.usuarioproceso   := SUBSTR(linebuf, 91, 8);
-              cRecauda.fechaproceso     := SYSDATE;
-              cRecauda.usuarioproceso   := USER;
               BEGIN
                 SELECT MIN(numerocuota)
                 INTO vNumerocuota
@@ -132,30 +438,71 @@ BEGIN
               EXCEPTION WHEN OTHERS THEN
                 RAISE_APPLICATION_ERROR(-20120,'  cRecauda.estado  ' || cRecauda.estado  );
               END;
+              IF cRecauda.tipopago = 'ACT' THEN
+                BEGIN
+                  SELECT MIN(numerocuota)
+                    INTO vNumerocuota
+                    FROM prestamocuotas
+                  WHERE periodosolicitud = cRecauda.periodosolicitud 
+                    AND numerosolicitud =  cRecauda.numerosolicitud 
+                    AND estado = 2;
+                EXCEPTION WHEN OTHERS THEN
+                  vNumerocuota := NULL;
+                END; 
+                --
+                cRecauda.cuotacronograma := vNumerocuota;
+                --
+                cRecauda.amortizacion   := PKG_PRESTAMOCUOTAS.F_OBT_AMORTIZACION(   cRecauda.numerosolicitud, 
+                                                                                    cRecauda.periodosolicitud, 
+                                                                                    vNumerocuota);
+                --
+                cRecauda.interes        := PKG_PRESTAMOCUOTAS.F_OBT_INTERES(    cRecauda.numerosolicitud,
+                                                                                cRecauda.periodosolicitud, 
+                                                                                vNumerocuota );
+                cRecauda.mora           := 0;
+                -- 
+                cRecauda.reajuste       := PKG_PRESTAMOCUOTAS.F_OBT_REAJUSTE(   cRecauda.numerosolicitud, 
+                                                                                cRecauda.periodosolicitud, 
+                                                                                vNumerocuota);
+                -- 
+                cRecauda.portes         := PKG_PRESTAMOCUOTAS.F_OBT_PORTES(     cRecauda.numerosolicitud, 
+                                                                                cRecauda.periodosolicitud, 
+                                                                                vNumerocuota);
+                --
+                cRecauda.segurointeres  := PKG_PRESTAMOCUOTAS.F_OBT_SEGUROINTERES(  cRecauda.numerosolicitud, 
+                                                                                    cRecauda.periodosolicitud, 
+                                                                                    vNumerocuota); 
+                  
+              ELSIF cRecauda.tipopago = 'ATR' THEN
+                SELECT SUM(SALDOCAPITAL)
+                INTO cRecauda.amortizacion
+                FROM TABLE( CRE08070.DEUDACUOTASSIP(    cRecauda.periodosolicitud, 
+                                                        cRecauda.numerosolicitud, 
+                                                        cRecauda.fechaenvio ) ) 
+                WHERE FECHAVENCIMIENTO <= cRecauda.fechaenvio
+                AND (SALDOCAPITAL+SALDOINTERES+SALDOMORA)>0;
+                --                                                         
+                cRecauda.interes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOINTERES(    cRecauda.periodosolicitud, 
+                                                                                        cRecauda.numerosolicitud, 
+                                                                                        cRecauda.fechaenvio );
+                --
+                cRecauda.mora            := PKG_RECAUDACIONBANCO.F_OBT_SALDOMORA(   cRecauda.periodosolicitud, 
+                                                                                    cRecauda.numerosolicitud, 
+                                                                                    cRecauda.fechaenvio );
+                --
+                cRecauda.reajuste       := PKG_RECAUDACIONBANCO.F_OBT_SALDOREAJUSTE(    cRecauda.periodosolicitud, 
+                                                                                        cRecauda.numerosolicitud, 
+                                                                                        cRecauda.fechaenvio );
+                -- 
+                cRecauda.portes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOPORTES(  cRecauda.periodosolicitud, 
+                                                                                    cRecauda.numerosolicitud, 
+                                                                                    cRecauda.fechaenvio );
+                --
+                cRecauda.segurointeres  := PKG_RECAUDACIONBANCO.F_OBT_SALDOSEGUROINTERES(   cRecauda.periodosolicitud, 
+                                                                                            cRecauda.numerosolicitud, 
+                                                                                            cRecauda.fechaenvio );
+              END IF;
 
-              cRecauda.cuotacronograma  := vNumerocuota;
-
-              cRecauda.amortizacion     := pkg_prestamocuotas.F_OBT_AMORTIZACION (  cRecauda.numerosolicitud, 
-                                                  cRecauda.periodosolicitud, 
-                                                  vNumerocuota);
-
-              cRecauda.interes          := pkg_prestamocuotas.F_OBT_INTERES (     cRecauda.numerosolicitud,
-                                                  cRecauda.periodosolicitud, 
-                                                  vNumerocuota );
-
-              cRecauda.mora             := 0;
-
-              cRecauda.reajuste         := pkg_prestamocuotas.F_OBT_REAJUSTE (    cRecauda.numerosolicitud, 
-                                                  cRecauda.periodosolicitud, 
-                                                  vNumerocuota);
-
-              cRecauda.portes           := pkg_prestamocuotas.F_OBT_PORTES (    cRecauda.numerosolicitud, 
-                                                  cRecauda.periodosolicitud, 
-                                                  vNumerocuota);
-
-              cRecauda.segurointeres    := pkg_prestamocuotas.F_OBT_SEGUROINTERES(  cRecauda.numerosolicitud, 
-                                                  cRecauda.periodosolicitud, 
-                                                  vNumerocuota); 
               cRecauda.totalcuota     :=  NVL(cRecauda.amortizacion, 0) +
                               NVL(cRecauda.interes, 0) +
                               NVL(cRecauda.mora, 0) +
@@ -262,20 +609,14 @@ PROCEDURE P_GEN_CARGAGLOBOKAS( PIDirectorio    VARCHAR2,
                             PINombreArchivo VARCHAR2,
                             PIFechaProceso IN DATE:=SYSDATE
                           ) IS
-    in_file    UTL_FILE.FILE_TYPE;
-    linebuf    VARCHAR2 (1000);
-    cRecauda   recaudacionbanco%ROWTYPE;
-    vFechapago VARCHAR2(8);
-    vFechaenvio VARCHAR2(8);
-    vValidaTrama  NUMBER;
-    vFechaProceso  DATE:=SYSDATE;
+  in_file         UTL_FILE.FILE_TYPE;
+	linebuf				  VARCHAR2 (1000);
+	cRecauda			  recaudacionbanco%ROWTYPE;
+	vValidaTrama		NUMBER;
+	vFechaProceso		DATE:= SYSDATE;
+	vNumerocuota		prestamocuotas.numerocuota%TYPE;
 
-    vCodBanco  NUMBER:=5; --CodigoBanco Scotiabank
-    vNumerocuota  prestamocuotas.numerocuota%TYPE;
-
-  vNrocli       VARCHAR(15);
-  vNroSer       VARCHAR(15);
-
+	vCodSVC				VARCHAR(4) := '3300'; --Codigo del Servicio SVC
 BEGIN
     
     in_file := UTL_FILE.FOPEN( PIDirectorio, PINombreArchivo, 'r');
@@ -285,197 +626,290 @@ BEGIN
         
         linebuf := trim(linebuf);
 
-        IF linebuf IS NOT NULL AND substr(linebuf,1,2 ) = '33' THEN
+        IF linebuf IS NOT NULL AND SUBSTR(linebuf, 1, 4) = vCodSVC THEN
             SELECT COUNT(*) INTO vValidaTrama 
             FROM RECAUDACIONBANCO 
             WHERE REPLACE(TRIM(TRAMA),' ','')= REPLACE(TRIM(linebuf),' ','');
             
             IF vValidaTrama = 0 THEN
 
-                cRecauda.trama := linebuf;
-                cRecauda.fechacarga   := vFechaProceso;
-                cRecauda.usuariocarga := USER;
-                cRecauda.codigobanco  := vCodBanco;
-                
+                cRecauda.trama					  := linebuf;
+                cRecauda.fechacarga				:= vFechaProceso;
+                cRecauda.usuariocarga			:= USER;
+                cRecauda.codigobanco			:= 5;		-- Codigo Banco en Datosbanco -- ScotiaBank
+
                 BEGIN
-                    vNrocli           := SUBSTR(linebuf, 43, 15);
-                    vNroSer           := SUBSTR(linebuf, 5, 15);
+                  --CODSER Siempre 33
+                  --SUBSTR(linebuf, 1, 2)
 
-                    cRecauda.nombrecliente    := PKG_PERSONA.F_OBT_NOMBRECOMPLETO(TO_NUMBER(TRIM(SUBSTR(linebuf, 29, 15))));
-                    cRecauda.numerocuota    := SUBSTR(vNrocli, 0, 3);
-                    
-                    cRecauda.referencias        := SUBSTR(linebuf, 78, 21);
-                    cRecauda.moneda             := SUBSTR(linebuf, 28, 1);
+                  --CODSEC Siempre 00
+                  --SUBSTR(linebuf, 3, 2)
 
-                    cRecauda.numerocuentabanco  := pkg_datosbanco.f_obt_cuentabancorecauda(cRecauda.codigobanco, cRecauda.moneda);
+                  --NROFAC (PERIODO+SOLICITUD-ACT/ATR)
+                  --SUBSTR(linebuf, 5, 15)
+                  cRecauda.periodosolicitud  	:= SUBSTR(linebuf, 5, 4);
+                  cRecauda.numerosolicitud   	:= SUBSTR(linebuf, 9, 7);
+                  --guion
+                  cRecauda.tipopago			:= SUBSTR(linebuf, 17, 3);
 
-                    cRecauda.periodosolicitud   := SUBSTR(vNroSer, 1, 4);
-                    cRecauda.numerosolicitud    := SUBSTR(vNroSer, 5, 7);
-                    
-                    SELECT b.CIP INTO cRecauda.codigosocio
-                    FROM PRESTAMO a,PERSONA b
-                    WHERE a.PERIODOSOLICITUD=cRecauda.periodosolicitud
-                        AND a.NUMEROSOLICITUD=cRecauda.numerosolicitud
-                        AND b.CODIGOPERSONA=a.CODIGOPERSONA
-                        AND ROWNUM = 1;
+                  SELECT b.CIP, b.nombrecompleto INTO cRecauda.codigosocio, cRecauda.nombrecliente
+                  FROM PRESTAMO a,PERSONA b
+                  WHERE a.PERIODOSOLICITUD=cRecauda.periodosolicitud
+                    AND a.NUMEROSOLICITUD=cRecauda.numerosolicitud
+                    AND b.CODIGOPERSONA=a.CODIGOPERSONA
+                    AND ROWNUM = 1;
 
-                    cRecauda.importeorigen    := TO_NUMBER(LTRIM(SUBSTR(linebuf, 62, 10), '0') || '.' || SUBSTR(linebuf, 72, 2), '9999999.99');
-                    cRecauda.importedepositado  := cRecauda.importeorigen;
+                  --FECFAC (YYYYMMDD)
+                  --SUBSTR(linebuf, 20, 8)
 
-                    cRecauda.importemora    := 0;
-                    --cRecauda.oficinapago    := SUBSTR(linebuf, 82, 9);
-                    cRecauda.oficinapago    := 0;
-                    cRecauda.nromovimiento    := vNrocli;
+                  --MONFAC (Soles = 1)
+                  --SUBSTR(linebuf, 28, 1)
+                  cRecauda.moneda           	:= SUBSTR(linebuf, 28, 1);
 
-                    cRecauda.fechaenvio     := TO_DATE  (
-                                                            SUBSTR(vNrocli, -2, 2)||'/'||
-                                                            SUBSTR(vNrocli, -4, 2)||'/'||
-                                                            SUBSTR(vNrocli, -6, 2),
-                                                            'DD/MM/RR'
-                                                            );
+                  --NROSER (Cod. Socio) 
+                  --SUBSTR(linebuf, 29, 15)
 
-                    cRecauda.fechavencimiento   := TO_DATE  (
-                                                            SUBSTR(vNrocli, -8, 2)||'/'||
-                                                            SUBSTR(vNrocli, -10, 2)||'/'||
-                                                            SUBSTR(vNrocli, -12, 2),
-                                                            'DD/MM/RR'
-                                                            );
+                  --NROCLI (NroCuota, FechaVencimiento, FechaEnvio) 
+                  --SUBSTR(linebuf, 44, 15)
+                  cRecauda.numerocuota		:= SUBSTR(linebuf, 44, 3);
+                  cRecauda.fechavencimiento 	:= TO_DATE 	(
+                                      SUBSTR(linebuf, 47, 2)||'-'||
+                                      SUBSTR(linebuf, 49, 2)||'-'||
+                                      SUBSTR(linebuf, 51, 2),
+                                      'YY-MM-DD'
+                                      );
+                  cRecauda.fechaenvio 		:= TO_DATE 	(
+                                      SUBSTR(linebuf, 53, 2)||'-'||
+                                      SUBSTR(linebuf, 55, 2)||'-'||
+                                      SUBSTR(linebuf, 57, 2),
+                                      'YY-MM-DD'
+                                      );
 
-                    cRecauda.fechapago      := TO_DATE(SUBSTR(linebuf, 26, 2) || '/' || SUBSTR(linebuf, 24, 2) || '/' || SUBSTR(linebuf, 20, 4), 'DD/MM/RRRR');
+                  cRecauda.nromovimiento 		:= SUBSTR(linebuf, 44, 15);
 
-                    cRecauda.fechaproceso     := SYSDATE;
-                    cRecauda.usuarioproceso   := USER;
+                  --NROCEN Siempre 000
+                  --SUBSTR(linebuf, 59, 3)
+
+                  --IMPTOT
+                  --SUBSTR(linebuf, 62, 12)
+                  cRecauda.importeorigen 		:= TO_NUMBER(SUBSTR(linebuf, 62, 12)) / 100;
+                  cRecauda.importedepositado 	:= cRecauda.importeorigen;
+                  
+                  --TIPODOC1 Siempre R
+                  --SUBSTR(linebuf, 74, 2)
+                  
+                  --TIPOENT Siempre CT
+                  --SUBSTR(linebuf, 76, 2)
+                  
+                  --CODENT
+                  --SUBSTR(linebuf, 78, 4)
+                  
+                  --CODSUC
+                  --SUBSTR(linebuf, 82, 6)
+                  
+                  --CODAGE
+                  --SUBSTR(linebuf, 88, 3)
+                  
+                  --USUARIO
+                  --SUBSTR(linebuf, 91, 8)
+                  cRecauda.referencias      	:= SUBSTR(linebuf, 74, 25);
+                  
+                  --FECCAN (YYYYMMDD)
+                  --SUBSTR(linebuf, 99, 8)
+                  cRecauda.fechapago 			:= TO_DATE 	(
+                                      SUBSTR(linebuf, 99, 4)||'-'||
+                                      SUBSTR(linebuf, 103, 2)||'-'||
+                                      SUBSTR(linebuf, 105, 2),
+                                      'YYYY-MM-DD'
+                                      );
+                  
+                  --HORPAG (HHMMSS)
+                  --SUBSTR(linebuf, 107, 6)
+                  
+                  --CODNEG
+                  --SUBSTR(linebuf, 113, 2)
+                  
+                  --VIAPAG
+                  --SUBSTR(linebuf, 115, 2)
+                  
+                  --FILLER
+                  --SUBSTR(linebuf, 117, 15)
+
+                  cRecauda.numerocuentabanco 	:= pkg_datosbanco.f_obt_cuentabancorecauda(cRecauda.codigobanco, cRecauda.moneda);
+
+                  cRecauda.importemora 		:= 0;
+                  cRecauda.oficinapago 		:= 0;
+
+                  BEGIN
+                    SELECT MIN(numerocuota)
+                    INTO vNumerocuota
+                    FROM prestamocuotas 
+                    WHERE periodosolicitud = cRecauda.periodosolicitud 
+                    AND numerosolicitud = cRecauda.numerosolicitud 
+                    AND estado = 2;
+                  EXCEPTION WHEN OTHERS THEN
+                    vNumerocuota := NULL;
+                  END; 
+
+                  BEGIN
+                    PKG_RECAUDACIONBANCO.P_OBT_VERIFICARDEBITOAUTO(cRecauda.periodosolicitud, cRecauda.numerosolicitud, cRecauda.debitoautomatico);
+                    cRecauda.estado := '1';
+                  EXCEPTION WHEN OTHERS THEN
+                    RAISE_APPLICATION_ERROR(-20120,'  cRecauda.estado  ' || cRecauda.estado  );
+                  END;
+
+                  IF cRecauda.tipopago = 'ACT' THEN
                     BEGIN
-                        SELECT MIN(numerocuota)
+                      SELECT MIN(numerocuota)
                         INTO vNumerocuota
-                        FROM prestamocuotas 
-                        WHERE periodosolicitud = cRecauda.periodosolicitud 
-                        AND numerosolicitud = cRecauda.numerosolicitud 
+                        FROM prestamocuotas
+                      WHERE periodosolicitud = cRecauda.periodosolicitud 
+                        AND numerosolicitud =  cRecauda.numerosolicitud 
                         AND estado = 2;
-
                     EXCEPTION WHEN OTHERS THEN
-                        vNumerocuota := NULL;
+                      vNumerocuota := NULL;
                     END; 
-
-                    BEGIN
-                        PKG_RECAUDACIONBANCO.P_OBT_VERIFICARDEBITOAUTO(cRecauda.periodosolicitud, cRecauda.numerosolicitud, cRecauda.debitoautomatico);
-                        cRecauda.estado := '1';
-
-                    EXCEPTION WHEN OTHERS THEN
-                        RAISE_APPLICATION_ERROR(-20120,'  cRecauda.estado  ' || cRecauda.estado  );
-                    END;
-
-                    cRecauda.cuotacronograma  := vNumerocuota;
-
-                    cRecauda.amortizacion     := pkg_prestamocuotas.F_OBT_AMORTIZACION (  cRecauda.numerosolicitud, 
-                                                                                            cRecauda.periodosolicitud, 
-                                                                                            vNumerocuota);
-
-                    cRecauda.interes          := pkg_prestamocuotas.F_OBT_INTERES (     cRecauda.numerosolicitud,
-                                                                                            cRecauda.periodosolicitud, 
-                                                                                            vNumerocuota );
-
-                    cRecauda.mora             := 0;
-
-                    cRecauda.reajuste         := pkg_prestamocuotas.F_OBT_REAJUSTE (    cRecauda.numerosolicitud, 
-                                                                                            cRecauda.periodosolicitud, 
-                                                                                            vNumerocuota);
-
-                    cRecauda.portes           := pkg_prestamocuotas.F_OBT_PORTES (    cRecauda.numerosolicitud, 
-                                                                                            cRecauda.periodosolicitud, 
-                                                                                            vNumerocuota);
-
-                    cRecauda.segurointeres    := pkg_prestamocuotas.F_OBT_SEGUROINTERES(  cRecauda.numerosolicitud, 
-                                                                                            cRecauda.periodosolicitud, 
-                                                                                            vNumerocuota); 
-                    cRecauda.totalcuota     :=  NVL(cRecauda.amortizacion, 0) +
-                                                    NVL(cRecauda.interes, 0) +
-                                                    NVL(cRecauda.mora, 0) +
-                                                    NVL(cRecauda.reajuste, 0) +
-                                                    NVL(cRecauda.portes, 0) +
-                                                    NVL(cRecauda.segurointeres, 0);
                     --
-                    IF cRecauda.numerocuota <> cRecauda.cuotacronograma THEN 
-                        cRecauda.observaciones  := cRecauda.observaciones || ' CUOTAS DIFERENTES ' || CHR(9);
-                    END IF;
+                    cRecauda.cuotacronograma := vNumerocuota;
+                    --
+                    cRecauda.amortizacion   := PKG_PRESTAMOCUOTAS.F_OBT_AMORTIZACION(   cRecauda.numerosolicitud, 
+                                                                                        cRecauda.periodosolicitud, 
+                                                                                        vNumerocuota);
+                    --
+                    cRecauda.interes        := PKG_PRESTAMOCUOTAS.F_OBT_INTERES(    cRecauda.numerosolicitud,
+                                                                                    cRecauda.periodosolicitud, 
+                                                                                    vNumerocuota );
+                    cRecauda.mora           := 0;
+                    -- 
+                    cRecauda.reajuste       := PKG_PRESTAMOCUOTAS.F_OBT_REAJUSTE(   cRecauda.numerosolicitud, 
+                                                                                    cRecauda.periodosolicitud, 
+                                                                                    vNumerocuota);
+                    -- 
+                    cRecauda.portes         := PKG_PRESTAMOCUOTAS.F_OBT_PORTES(     cRecauda.numerosolicitud, 
+                                                                                    cRecauda.periodosolicitud, 
+                                                                                    vNumerocuota);
+                    --
+                    cRecauda.segurointeres  := PKG_PRESTAMOCUOTAS.F_OBT_SEGUROINTERES(  cRecauda.numerosolicitud, 
+                                                                                        cRecauda.periodosolicitud, 
+                                                                                        vNumerocuota); 
+                      
+                  ELSIF cRecauda.tipopago = 'ATR' THEN
+                    SELECT SUM(SALDOCAPITAL)
+                    INTO cRecauda.amortizacion
+                    FROM TABLE( CRE08070.DEUDACUOTASSIP(    cRecauda.periodosolicitud, 
+                                                            cRecauda.numerosolicitud, 
+                                                            cRecauda.fechaenvio ) ) 
+                    WHERE FECHAVENCIMIENTO <= cRecauda.fechaenvio
+                    AND (SALDOCAPITAL+SALDOINTERES+SALDOMORA)>0;
+                    --                                                         
+                    cRecauda.interes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOINTERES(    cRecauda.periodosolicitud, 
+                                                                                            cRecauda.numerosolicitud, 
+                                                                                            cRecauda.fechaenvio );
+                    --
+                    cRecauda.mora            := PKG_RECAUDACIONBANCO.F_OBT_SALDOMORA(   cRecauda.periodosolicitud, 
+                                                                                        cRecauda.numerosolicitud, 
+                                                                                        cRecauda.fechaenvio );
+                    --
+                    cRecauda.reajuste       := PKG_RECAUDACIONBANCO.F_OBT_SALDOREAJUSTE(    cRecauda.periodosolicitud, 
+                                                                                            cRecauda.numerosolicitud, 
+                                                                                            cRecauda.fechaenvio );
+                    -- 
+                    cRecauda.portes         := PKG_RECAUDACIONBANCO.F_OBT_SALDOPORTES(  cRecauda.periodosolicitud, 
+                                                                                        cRecauda.numerosolicitud, 
+                                                                                        cRecauda.fechaenvio );
+                    --
+                    cRecauda.segurointeres  := PKG_RECAUDACIONBANCO.F_OBT_SALDOSEGUROINTERES(   cRecauda.periodosolicitud, 
+                                                                                                cRecauda.numerosolicitud, 
+                                                                                                cRecauda.fechaenvio );
+                  END IF;
+                  cRecauda.totalcuota 		  := 	NVL(cRecauda.amortizacion, 0) +
+                                                NVL(cRecauda.interes, 0) +
+                                                NVL(cRecauda.mora, 0) +
+                                                NVL(cRecauda.reajuste, 0) +
+                                                NVL(cRecauda.portes, 0) +
+                                                NVL(cRecauda.segurointeres, 0);
+                  --
+                  IF cRecauda.numerocuota <> cRecauda.cuotacronograma THEN 
+                    cRecauda.observaciones 	:= cRecauda.observaciones || ' CUOTAS DIFERENTES ' || CHR(9);
+                  END IF;
 
-                    IF cRecauda.importeorigen <> cRecauda.totalcuota THEN
-                        cRecauda.observaciones  := cRecauda.observaciones || ' IMPORTES DIFERENTES ' || CHR(9);
-                    END IF;
+                  IF cRecauda.importeorigen <> cRecauda.totalcuota THEN
+                    cRecauda.observaciones 	:= cRecauda.observaciones || ' IMPORTES DIFERENTES ' || CHR(9);
+                  END IF;
 
-                    BEGIN
-                        INSERT INTO recaudacionbanco( fechacarga,
-                        usuariocarga,
-                        codigosocio,
-                        nombrecliente,
-                        referencias,
-                        importeorigen,
-                        importedepositado,
-                        importemora,
-                        oficinapago,
-                        nromovimiento,
-                        fechapago,
-                        tipopago,
-                        estado,
-                        codigobanco,
-                        numerocuentabanco,
-                        periodosolicitud,
-                        numerosolicitud,
-                        moneda,
-                        numerocuota,
-                        fechavencimiento,
-                        amortizacion,
-                        interes,
-                        mora,
-                        reajuste,
-                        portes,
-                        segurointeres,
-                        fechaproceso,
-                        usuarioproceso,
-                        trama,
-                        fechaenvio,
-                        debitoautomatico,
-                        cuotacronograma,
-                        totalcuota,
-                        observaciones
-                        )
-                        VALUES ( cRecauda.fechacarga,
-                        cRecauda.usuariocarga,
-                        cRecauda.codigosocio,
-                        cRecauda.nombrecliente,
-                        cRecauda.referencias,
-                        cRecauda.importeorigen,
-                        cRecauda.importedepositado,
-                        cRecauda.importemora,
-                        cRecauda.oficinapago,
-                        cRecauda.nromovimiento,
-                        cRecauda.fechapago,
-                        cRecauda.tipopago,
-                        cRecauda.estado,
-                        cRecauda.codigobanco,
-                        cRecauda.numerocuentabanco,
-                        cRecauda.periodosolicitud,
-                        cRecauda.numerosolicitud,
-                        cRecauda.moneda,
-                        cRecauda.numerocuota,
-                        cRecauda.fechavencimiento,
-                        cRecauda.amortizacion,
-                        cRecauda.interes,
-                        cRecauda.mora,
-                        cRecauda.reajuste,
-                        cRecauda.portes,
-                        cRecauda.segurointeres,
-                        cRecauda.fechaproceso,
-                        cRecauda.usuarioproceso,
-                        cRecauda.trama,
-                        cRecauda.fechaenvio,
-                        cRecauda.debitoautomatico,
-                        cRecauda.cuotacronograma,
-                        cRecauda.totalcuota,
-                        cRecauda.observaciones
-                        );
-                        COMMIT;
-                    END;
+                  BEGIN
+                    INSERT INTO recaudacionbanco( fechacarga,
+                    usuariocarga,
+                    codigosocio,
+                    nombrecliente,
+                    referencias,
+                    importeorigen,
+                    importedepositado,
+                    importemora,
+                    oficinapago,
+                    nromovimiento,
+                    fechapago,
+                    tipopago,
+                    estado,
+                    codigobanco,
+                    numerocuentabanco,
+                    periodosolicitud,
+                    numerosolicitud,
+                    moneda,
+                    numerocuota,
+                    fechavencimiento,
+                    amortizacion,
+                    interes,
+                    mora,
+                    reajuste,
+                    portes,
+                    segurointeres,
+                    fechaproceso,
+                    usuarioproceso,
+                    trama,
+                    fechaenvio,
+                    debitoautomatico,
+                    cuotacronograma,
+                    totalcuota,
+                    observaciones
+                    )
+                    VALUES ( cRecauda.fechacarga,
+                    cRecauda.usuariocarga,
+                    cRecauda.codigosocio,
+                    cRecauda.nombrecliente,
+                    cRecauda.referencias,
+                    cRecauda.importeorigen,
+                    cRecauda.importedepositado,
+                    cRecauda.importemora,
+                    cRecauda.oficinapago,
+                    cRecauda.nromovimiento,
+                    cRecauda.fechapago,
+                    cRecauda.tipopago,
+                    cRecauda.estado,
+                    cRecauda.codigobanco,
+                    cRecauda.numerocuentabanco,
+                    cRecauda.periodosolicitud,
+                    cRecauda.numerosolicitud,
+                    cRecauda.moneda,
+                    cRecauda.numerocuota,
+                    cRecauda.fechavencimiento,
+                    cRecauda.amortizacion,
+                    cRecauda.interes,
+                    cRecauda.mora,
+                    cRecauda.reajuste,
+                    cRecauda.portes,
+                    cRecauda.segurointeres,
+                    cRecauda.fechaproceso,
+                    cRecauda.usuarioproceso,
+                    cRecauda.trama,
+                    cRecauda.fechaenvio,
+                    cRecauda.debitoautomatico,
+                    cRecauda.cuotacronograma,
+                    cRecauda.totalcuota,
+                    cRecauda.observaciones
+                    ) ;
+                    COMMIT;
+                  END;
                 END;
             END IF;
         END IF;
@@ -2751,7 +3185,7 @@ BEGIN
                                                    PICodigopersona        => PICodigopersona,
                                                    PIPeriodosolicitud     => PIPeriodosolicitud,
                                                    PINumerosolicitud      => PINumerosolicitud,
-                                                   PIImporte              => PIImporte,
+                                                   PIImporte              => PIImporteOrigen,
                                                    PIPagarCapital         => PIPagarCapital,  -- Total Amortizacion
                                                    PIInteres              => PIInteres,       -- Total Interes
                                                    PIMora                 => PIMora,          -- Total Mora

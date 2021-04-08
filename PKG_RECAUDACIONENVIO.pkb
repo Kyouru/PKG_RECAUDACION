@@ -7,8 +7,10 @@ CREATE OR REPLACE PACKAGE BODY SISGODBA.PKG_RECAUDACIONENVIO Is
     -- 18.11.2019 - David Chara I. - Ajuste P_GEN_DATOSRECAUDACION para incluir la funcion F_GEN_CADENALIMPIA en los nombres de los socios
     -- 16.01.2020 - David Chara I. - Se agrego la insercion de valores a la tabla RECAUDACIONENVIO de la data enviada al generar los txt de recaudacion
     -- 25.11.2020 - Kenji Jhoncon - Agregar Recaudacion Interbank y GloboKasnet. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
-    -- 26.11.2020 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXT_IBK, para poder crear un unico archivo .txt con recaudacion de ambas monedas. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
+    -- 26.11.2020 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXTIBK, para poder crear un unico archivo .txt con recaudacion de ambas monedas para Interbank. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
     -- 25.02.2021 - Kenji Jhoncon - Ajuste P_GEN_ARCHIVOTXT, numero servicio Kasnet completar con ceros a la izquierda
+    -- 19.03.2021 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXTBN, para poder crear un unico archivo .txt con recaudacion de ambas monedas para Banco de la Nacion. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
+    --
 
     FUNCTION F_GET_MONTOADEUDADO ( P_PeriodoSolicitud IN NUMBER,
                                    P_NumeroSolicitud  IN NUMBER,
@@ -803,165 +805,180 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
       
       vSumaDetalle NUMBER(15,2):=0;
       
-            -- Ini-Datos Banco de la Nacion--
-      vDetalleBn      VARCHAR2(400):= ' ';
+      --Datos IBK--
+
+      --Tipos de Registo
+      vCabeceraIBK        VARCHAR2(400);
+      vCuotaIBK           VARCHAR2(400);
+      vDetalleIBK         VARCHAR2(400);
+      --
+
+      vTipoCabeceraIBK       VARCHAR2(2) := '11';
+      vCodGrupoIBK           VARCHAR2(2) := '21';
+      vCodRubroIBK           VARCHAR2(2) := '03';
+      vCodEmpresaIBK         VARCHAR2(3) := '953';
+      vCodServicioIBK        VARCHAR2(2) := '01';
+      vCodUnicoIBK           VARCHAR2(10) := '0005457247';
+
+      vTipoCuotaIBK          VARCHAR2(2) := '12';
+
+      vTipoDetalleIBK        VARCHAR2(2) := '13';
+
+      vMonedaIBK          VARCHAR2(2) := '12';
+
+      vContaCreditoIBK      NUMBER(6):=0; --Cuenta solo < 10M
+      vSumaCreditoIBK     NUMBER(15,2) := 0; --Suma solo < 10M
+
+      --Fin Datos IBK--
+
+      --Datos GLOBOKAS--
+      vCodSer  VARCHAR2(2) := '33';
+      vCodEmp  VARCHAR2(2) := '33';
+      vSumaTotalGlobokas NUMBER(15, 2):=0;
+
+      vMonedaGlobokas       VARCHAR2(2);
+      vDetalleGlobokas      VARCHAR2(400):= ' ';
+      vCabeceraGlobokas      VARCHAR2(400):= ' ';
+      --Fin Datos GLOBOKAS--
+
+      --Datos BancoNacion--
+      vDetalleBN              VARCHAR2(400);
       
-      -- Fin-Datos Banco de la Nacion--
-      
-    --Datos IBK--
+      vSituacionBN            VARCHAR2(2)     := '01';              --01: Pendiente recuperacion  03: Anulado
+      vTasaBN                 VARCHAR2(1)     := '0';               --0: Tasa determinada  1: Tasa con factores
+      vCodigoCuentaMNBN       VARCHAR2(11)    := '00068385520';     --Cuenta a abonar por Recuperaciones Soles
+      vCodigoCuentaMEBN       VARCHAR2(11)    := '06068002786';     --Cuenta a abonar por Recuperaciones Dolares
 
-    --Tipos de Registo
-    vCabeceraIBK        VARCHAR2(400);
-    vCuotaIBK           VARCHAR2(400);
-    vDetalleIBK         VARCHAR2(400);
-    --
-
-    vTipoCabeceraIBK       VARCHAR2(2) := '11';
-    vCodGrupoIBK           VARCHAR2(2) := '21';
-    vCodRubroIBK           VARCHAR2(2) := '03';
-    vCodEmpresaIBK         VARCHAR2(3) := '953';
-    vCodServicioIBK        VARCHAR2(2) := '01';
-    vCodUnicoIBK           VARCHAR2(10) := '0005457247';
-
-    vTipoCuotaIBK          VARCHAR2(2) := '12';
-
-    vTipoDetalleIBK        VARCHAR2(2) := '13';
-
-    vMonedaIBK          VARCHAR2(2) := '12';
-
-    vContaCreditoIBK      NUMBER(6):=0; --Cuenta solo < 10M
-	vSumaCreditoIBK     NUMBER(15,2) := 0; --Suma solo < 10M
-
-    --Fin Datos IBK--
-
-    --Datos GLOBOKAS--
-	vCodSer  VARCHAR2(2) := '33';
-	vCodEmp  VARCHAR2(2) := '33';
-	vSumaTotalGlobokas NUMBER(15, 2):=0;
-
-	vMonedaGlobokas       VARCHAR2(2);
-	vDetalleGlobokas      VARCHAR2(400):= ' ';
-	vCabeceraGlobokas      VARCHAR2(400):= ' ';
-    --Fin Datos GLOBOKAS--
+      vMonedaBN               VARCHAR2(1)     := '1';
+      vCodigoCuentaBN         VARCHAR2(11);
+      --Fin Datos BancoNacion--
 
     BEGIN
-         DELETE FROM recaudafinanciero;
-         --COMMIT;
-         DELETE FROM recaudacontinental;
-         --COMMIT;
-         DELETE FROM recaudacredito;
-         --COMMIT;
-         DELETE FROM recaudascotiabank;
-         --COMMIT;
-         DELETE FROM recaudabn;
-         --COMMIT;
-         IF PIMONEDA = 1 THEN
+        DELETE FROM recaudafinanciero;
+        DELETE FROM recaudacontinental;
+        DELETE FROM recaudacredito;
+        DELETE FROM recaudascotiabank;
+        DELETE FROM recaudabn;
+        IF PIMONEDA = 1 THEN
           DELETE FROM recaudainterbanksoles;
-         ELSE
+        ELSE
           DELETE FROM recaudainterbankdolares;
-         END IF;
-         DELETE FROM recaudaglobokas;
-         --COMMIT;
-         DELETE RECAUDAPTP
-         WHERE FechaEnvio=PIFECHA;
-         --
-         COMMIT;
-         --
-         EXECUTE IMMEDIATE 'ALTER SESSION set NLS_LANGUAGE = "SPANISH" ';
-         EXECUTE IMMEDIATE 'ALTER SESSION set NLS_TERRITORY = "SPAIN" ';
-         --
-         vTotalAmortizacion := 0;
-         vMontoadeudado     := 0;
-         vContaCREDITO      := 0;
-         vContaCREDITO1      := 0;
-         vSumaCREDITO       := 0;
-         vSumaDetalle        := 0;
-         --
-         FOR x IN detalle LOOP
-             vTotalAmortizacion  := NVL(x.SALDOCAPITAL,0) + NVL(x.SEGUROINTERES,0) +  NVL(x.APORTES,0) + NVL(x.REAJUSTE,0);
-             vMontoadeudado :=  vTotalAmortizacion + NVL(x.SALDOINTERES,0) +  NVL(x.SALDOMORA,0);
-             IF NVL (vTotalAmortizacion, 0) > 0 THEN
-                IF NVL (x.Monto_Minimo, 0) >= 0
-                   AND NVL (x.SALDOCAPITAL, 0) >= 0
-                   AND NVL (x.SALDOINTERES, 0) >= 0
-                   AND NVL (x.SALDOMORA, 0) >= 0
-                   AND NVL (x.SEGUROINTERES, 0) >= 0
-                   AND NVL (x.APORTES, 0) >= 0
-                   AND NVL (x.REAJUSTE, 0) >= 0
-                THEN
-                    IF x.Tipoproducto <> 'PTP' THEN
-                       --vTotalAdeudado := vTotalAdeudado + vMontoadeudado;
-                       --vTotalMinimo   := vTotalMinimo + vminimo;
-                       vContaCREDITO := vContaCREDITO + 1;
-                       vSumaCREDITO  := vSumaCREDITO + vMontoadeudado;
-                       
-             		      vSumaTotalGlobokas := vSumaTotalGlobokas + CEIL(vMontoadeudado); --GLOBOKAS solo acepta importes enteros (sin decimal)
+        END IF;
+        DELETE FROM recaudaglobokas;
+        IF PIMONEDA = 1 THEN
+          DELETE FROM recaudabanconacionsoles;
+        ELSE
+          DELETE FROM recaudabanconaciondolares;
+        END IF;
 
-                       IF NVL(vMontoadeudado, 0) < 10000000 THEN -- IBK solo acepta importes de 9 digitos (7 enteros y 2 decimales)
-                        vContaCreditoIBK := vContaCreditoIBK + 1;
-                        vSumaCreditoIBK  := vSumaCreditoIBK + FLOOR(NVL(vMontoadeudado, 0)*100); --Sin separador Decimal
-                       END IF;
+        DELETE RECAUDAPTP
+        WHERE FechaEnvio=PIFECHA;
+        --
+        COMMIT;
+        --
+        EXECUTE IMMEDIATE 'ALTER SESSION set NLS_LANGUAGE = "SPANISH" ';
+        EXECUTE IMMEDIATE 'ALTER SESSION set NLS_TERRITORY = "SPAIN" ';
+        --
+        vTotalAmortizacion := 0;
+        vMontoadeudado     := 0;
+        vContaCREDITO      := 0;
+        vContaCREDITO1     := 0;
+        vSumaCREDITO       := 0;
+        vSumaDetalle       := 0;
+        --
+        FOR x IN detalle LOOP
+          vTotalAmortizacion  := NVL(x.SALDOCAPITAL,0) + NVL(x.SEGUROINTERES,0) +  NVL(x.APORTES,0) + NVL(x.REAJUSTE,0);
+          vMontoadeudado :=  vTotalAmortizacion + NVL(x.SALDOINTERES,0) +  NVL(x.SALDOMORA,0);
+          IF NVL (vTotalAmortizacion, 0) > 0 THEN
+            IF NVL (x.Monto_Minimo, 0) >= 0
+              AND NVL (x.SALDOCAPITAL, 0) >= 0
+              AND NVL (x.SALDOINTERES, 0) >= 0
+              AND NVL (x.SALDOMORA, 0) >= 0
+              AND NVL (x.SEGUROINTERES, 0) >= 0
+              AND NVL (x.APORTES, 0) >= 0
+              AND NVL (x.REAJUSTE, 0) >= 0
+            THEN
+              IF x.Tipoproducto <> 'PTP' THEN
+                --vTotalAdeudado := vTotalAdeudado + vMontoadeudado;
+                --vTotalMinimo   := vTotalMinimo + vminimo;
+                vContaCREDITO := vContaCREDITO + 1;
+                vSumaCREDITO  := vSumaCREDITO + vMontoadeudado;
+                
+                vSumaTotalGlobokas := vSumaTotalGlobokas + CEIL(vMontoadeudado); --GLOBOKAS solo acepta importes enteros (sin decimal)
 
-                        --Insercion de la data enviada en los txt de recaudacion en la tabla RECAUDACIONENVIO -- David Chara 16-01-2020 
-                        DECLARE
-                        ITEMENVIO NUMBER;
-                        PERIODOSOLICITUDENVIO VARCHAR2(40);
-                        TIPOCUOTAENVIO VARCHAR2(3);
-                        MONEDAENVIO VARCHAR2(10);
-                        BEGIN
-                        SELECT MAX(ITEM) INTO ITEMENVIO FROM RECAUDACIONENVIO WHERE FECHA=TRUNC(TO_DATE(SYSDATE,'DD/MM/YYYY'));
-                        
-                        PERIODOSOLICITUDENVIO := SUBSTR(x.PAGO_ID, -14, 4);
-                        TIPOCUOTAENVIO := SUBSTR(x.PAGO_ID, -3, 3);
-                        
-                        IF PIMONEDA = 1 THEN
-                            MONEDAENVIO :='PEN';
-                        ELSE
-                             MONEDAENVIO :='USD';             
-                        END IF;
-                        
-                        
-                        INSERT INTO RECAUDACIONENVIO (FECHA,ITEM,PERIODOSOLICITUD,NUMEROSOLICITUD,REFERENCIA,NROCUOTA,TIPOCUOTA,CAPITAL,MORA,INTERES,TOTAL,FECHAGENERACION,MONEDA,FECHAVENCIMIENTO)
-                        VALUES ( TRUNC(TO_DATE(SYSDATE,'DD/MM/YYYY')), NVL(ITEMENVIO,0) +1,PERIODOSOLICITUDENVIO, x.NumeroSolicitud, x.NOM_CLIENTE, x.numerocuota, 
-                        TIPOCUOTAENVIO,x.SALDOCAPITAL,x.SALDOMORA,x.SALDOINTERES,vMontoadeudado,SYSDATE,MONEDAENVIO,TO_CHAR(x.fechavencimiento,'DD/MM/YYYY'));
-                        END;
-                       --Insercion de la data enviada en los txt de recaudacion en la tabla RECAUDACIONENVIO -- David Chara 16-01-2020
-
-                    END IF;
+                IF NVL(vMontoadeudado, 0) < 10000000 THEN -- IBK solo acepta importes de 9 digitos (7 enteros y 2 decimales)
+                  vContaCreditoIBK := vContaCreditoIBK + 1;
+                  vSumaCreditoIBK  := vSumaCreditoIBK + FLOOR(NVL(vMontoadeudado, 0)*100); --Sin separador Decimal
                 END IF;
-             END IF;
 
-         END LOOP;
-    dbms_output.put_line(' vContaCREDITO D'||vContaCREDITO);
-    dbms_output.put_line(' vSumaCREDITO D'||vSumaCREDITO);
-         --
-         IF PIMONEDA = 1 THEN
-            vmoneda :='PEN';
-            vNumeroClase := 500;
-            vCtaemp:= '296811343';
-            vMonedaCREDITO := '0';
-            vMonedaScotiabank := '0000';
-                vCuentaAbonoPieScotiabank := '00044460000924';
-            --vCuentaCabScotiabank := '00044460000924';
-            vCodigoAfiliacion := '2616734';
-            vMonedaIBK := '01';
-		        vMonedaGlobokas := '1';             --GLOBOKAS Solo Soles
+                --Insercion de la data enviada en los txt de recaudacion en la tabla RECAUDACIONENVIO -- David Chara 16-01-2020 
+                DECLARE
+                ITEMENVIO NUMBER;
+                PERIODOSOLICITUDENVIO VARCHAR2(40);
+                TIPOCUOTAENVIO VARCHAR2(3);
+                MONEDAENVIO VARCHAR2(10);
+                BEGIN
+                SELECT MAX(ITEM) INTO ITEMENVIO FROM RECAUDACIONENVIO WHERE FECHA=TRUNC(TO_DATE(SYSDATE,'DD/MM/YYYY'));
+                
+                PERIODOSOLICITUDENVIO := SUBSTR(x.PAGO_ID, -14, 4);
+                TIPOCUOTAENVIO := SUBSTR(x.PAGO_ID, -3, 3);
+                
+                IF PIMONEDA = 1 THEN
+                  MONEDAENVIO :='PEN';
+                ELSE
+                  MONEDAENVIO :='USD';             
+                END IF;
+                
+                
+                INSERT INTO RECAUDACIONENVIO (FECHA,ITEM,PERIODOSOLICITUD,NUMEROSOLICITUD,REFERENCIA,NROCUOTA,TIPOCUOTA,CAPITAL,MORA,INTERES,TOTAL,FECHAGENERACION,MONEDA,FECHAVENCIMIENTO)
+                VALUES ( TRUNC(TO_DATE(SYSDATE,'DD/MM/YYYY')), NVL(ITEMENVIO,0) +1,PERIODOSOLICITUDENVIO, x.NumeroSolicitud, x.NOM_CLIENTE, x.numerocuota, 
+                TIPOCUOTAENVIO,x.SALDOCAPITAL,x.SALDOMORA,x.SALDOINTERES,vMontoadeudado,SYSDATE,MONEDAENVIO,TO_CHAR(x.fechavencimiento,'DD/MM/YYYY'));
+                END;
+                --Insercion de la data enviada en los txt de recaudacion en la tabla RECAUDACIONENVIO -- David Chara 16-01-2020
+
+                END IF;
+            END IF;
+          END IF;
+
+        END LOOP;
+        dbms_output.put_line(' vContaCREDITO D'||vContaCREDITO);
+        dbms_output.put_line(' vSumaCREDITO D'||vSumaCREDITO);
+        --
+        IF PIMONEDA = 1 THEN
+          vmoneda :='PEN';
+          vNumeroClase := 500;
+          vCtaemp:= '296811343';
+          vMonedaCREDITO := '0';
+          vMonedaScotiabank := '0000';
+          vCuentaAbonoPieScotiabank := '00044460000924';
+          --vCuentaCabScotiabank := '00044460000924';
+          vCodigoAfiliacion := '2616734';
+          vMonedaIBK := '01';
+          vMonedaGlobokas := '1';             --GLOBOKAS Soles
           INSERT INTO recaudainterbanksoles ( tipo, campo ) VALUES ( 0, vSumaCreditoIBK ); 
           INSERT INTO recaudainterbanksoles ( tipo, campo ) VALUES ( 1, vContaCreditoIBK ); 
-         ELSE
-             vmoneda :='USD';
-             vNumeroClase := 600;
-             vCtaemp:= '296811350';
-             vMonedaCREDITO := '1';
-             vMonedaScotiabank := '0001';
-             vCuentaAbonoPieScotiabank := '01044460000621';
-             --vCuentaCabScotiabank := '01044460000621';
-             vCodigoAfiliacion := '2617465';
-            vMonedaIBK := '10';
-		        --vMonedaGlobokas := '2';             --GLOBOKAS Futuro +Dolares
+          vMonedaBN := '1';
+          vCodigoCuentaBN := vCodigoCuentaMNBN;
+          INSERT INTO recaudabanconacionsoles ( tipo, campo ) VALUES ( 0, vSumaCREDITO ); 
+          INSERT INTO recaudabanconacionsoles ( tipo, campo ) VALUES ( 1, vContaCredito ); 
+        ELSE
+          vmoneda :='USD';
+          vNumeroClase := 600;
+          vCtaemp:= '296811350';
+          vMonedaCREDITO := '1';
+          vMonedaScotiabank := '0001';
+          vCuentaAbonoPieScotiabank := '01044460000621';
+          --vCuentaCabScotiabank := '01044460000621';
+          vCodigoAfiliacion := '2617465';
+          vMonedaIBK := '10';
+          --vMonedaGlobokas := '2';             --GLOBOKAS Dolares
           INSERT INTO recaudainterbankdolares ( tipo, campo ) VALUES ( 0, vSumaCreditoIBK ); 
           INSERT INTO recaudainterbankdolares ( tipo, campo ) VALUES ( 1, vContaCreditoIBK ); 
-         END IF;
+          vMonedaBN := '2';
+          vCodigoCuentaBN := vCodigoCuentaMEBN;
+          INSERT INTO RECAUDABANCONACIONDOLARES ( tipo, campo ) VALUES ( 0, vSumaCREDITO ); 
+          INSERT INTO RECAUDABANCONACIONDOLARES ( tipo, campo ) VALUES ( 1, vContaCredito ); 
+        END IF;
          --
          vCabecera := vTipoRegistroCab||
                       vRucEmpresa||
@@ -1211,18 +1228,18 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
                                    ;
                                    
              vDetalleIBK :=  vTipoDetalleIBK ||                             --Tipo de registro
-                        RPAD(TRIM(x.codigosocio), 20, ' ') ||       --Código de deudor
+                        RPAD(TRIM(x.codigosocio), 20, ' ') ||       --C�digo de deudor
                         RPAD(TRIM(SUBSTR(PKG_PERSONA.F_OBT_NOMBRECOMPLETOBANCOS(x.codigopersona), 1, 30)), 30, ' ') ||
                                                                     --Nombre del deudor
                         RPAD(x.PeriodoSolicitud, 10, ' ') ||        --Referencia 1
                         RPAD(CASE SUBSTR(x.pago_id, -3, 3) WHEN 'ATR' THEN 'ATRASADO' WHEN 'ACT' THEN 'VIGENTE' ELSE ' ' END, 10, ' ') ||
                                                                     --Referencia 2
-                        'A' ||                                      --Tipo de Operación
-                        RPAD(x.NumeroSolicitud || CASE SUBSTR(x.pago_id, -3, 3) WHEN 'ACT' THEN 'V' ELSE 'A' END, 8, ' ') ||          --Código de cuota
-                        TO_CHAR(HOY, 'YYYYMMDD') ||                 --Fecha de emisión
+                        'A' ||                                      --Tipo de Operaci�n
+                        RPAD(x.NumeroSolicitud || CASE SUBSTR(x.pago_id, -3, 3) WHEN 'ACT' THEN 'V' ELSE 'A' END, 8, ' ') ||          --C�digo de cuota
+                        TO_CHAR(HOY, 'YYYYMMDD') ||                 --Fecha de emisi�n
                         TO_CHAR(x.fechavencimiento, 'YYYYMMDD') ||  --Fecha de vencimiento
                         RPAD(x.numerocuota || '-' || SUBSTR(x.pago_id, -3, 3) || '-' || x.PeriodoSolicitud, 15, ' ') ||
-                                                                    --Número de documento
+                                                                    --N�mero de documento
                         vMonedaIBK ||                               --Moneda de la deuda
                         LPAD(FLOOR((NVL(vMontoadeudado, 0) * 100)), 9, '0') ||
                                                                     --Importe del concepto 1
@@ -1245,7 +1262,7 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
                         LPAD(' ', 67, ' ') ||                       --Glosa Particular
                         LPAD(' ', 68, ' ') ||                       --Libre
                         '02' ||                                     --Tipo Formato
-                        '0000';                                     --Código fijo
+                        '0000';                                     --C�digo fijo
                                 
                   vDetalleGlobokas := vCodSer|| --SER Codigo del Servicio SVC
                                       '00'|| --SECCION fijo
@@ -1265,22 +1282,41 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
                                       TRIM(TO_CHAR(CEIL(vMontoadeudado)*100, '0000000000'))|| --TOTAL Importe Facturado a Cobrar
                                       vCodEmp|| --CODEMP Codigo de la empresa SVC
                                       'R'; --GLOBOKAS
-                                
-                  vDetalleBn := 'BN'|| CHR(9) ||
-                            vCtaemp || CHR(9) ||
-                            vNumeroDocumento || CHR(9) ||
-                            vmoneda  || CHR(9) ||
-                            NVL (TRIM(SUBSTR(TO_CHAR(vMontoadeudado,'9999999999999.99'),1,INSTR(TO_CHAR(vMontoadeudado,'9999999999999.99'),'.')-1))||
-                            TRIM(SUBSTR(TO_CHAR(vMontoadeudado,'9999999999999.99'),INSTR(TO_CHAR(vMontoadeudado,'9999999999999.99'),'.')+1,2)),0)
-                            || CHR(9) ||
-                            'REC' || CHR(9) ||
-                            '35' || CHR(9) ||
-                            vTipodocumentofin  || CHR(9) ||
-                            vNumeroDocumento || CHR(9) ||
-                            '"' || RPAD(TRIM(NVL( SISGODBA.F_GEN_CADENALIMPIA(x.nom_cliente),'')),30,' ')||'"' || CHR(9) ||
-                            RPAD(TRIM(x.pago_id),40,' ')  || CHR(9) ||
-                            TRIM(x.pago_id);
              --
+             
+                  vDetalleBN :=  LPAD(x.PeriodoSolicitud || x.NumeroSolicitud, 12, '0') ||                                       --Numero de credito
+                                  LPAD(x.numerocuota, 4, '0') ||                                                                  --Num. Cuota
+                                  vSituacionBN ||                                                                                 --Situaci�n del Contrato
+                                  vMonedaBN ||                                                                                    --Moneda
+                                  REPLACE(REPLACE(TRANSLATE(
+                                      CASE PKG_PERSONA.F_OBT_TIPOPERSONA(x.codigopersona)
+                                          WHEN 1 THEN
+                                              RPAD(PKG_PERSONANATURAL.F_OBT_APELLIDOPATERNO(x.codigopersona), 20, ' ') ||         --Apellido paterno
+                                              RPAD(PKG_PERSONANATURAL.F_OBT_APELLIDOMATERNO(x.codigopersona), 20, ' ') ||         --Apellido materno
+                                              RPAD(PKG_PERSONANATURAL.F_OBT_NOMBRES(x.codigopersona), 13, ' ')                    --Nombres
+                                          WHEN 2 THEN
+                                              RPAD(REPLACE(REPLACE(REPLACE(PKG_PERSONA.F_OBT_NOMBRECOMPLETO(x.codigopersona), '''', ''), ' & ', ' Y '), '&', ' Y '), 53, ' ')
+                                      END, '''&-', '   '), CHR(10), ''), CHR(13), '') ||
+                                      CASE SUBSTR(x.pago_id, -3, 3) WHEN 'ACT' THEN '1' ELSE '2' END ||
+                                      TO_CHAR(HOY, 'YYMMDD') ||
+                                  LPAD(FLOOR((NVL(vMontoadeudado, 0) * 100)), 15, '0') ||                                         --Importe Cuota
+                                  TO_CHAR(vfechabloqueo + 2, 'YYYYMMDD') ||                                                       --Fecha de vencimiento
+                                  vTasaBN ||                                                                                      --Tasa // 0:Tasa Determinada / 1:Tasa con Factores
+                                  LPAD(0 * 10000000, 15, '0') ||                                                                  --Factores Moratorio / 7 Decimales
+                                  LPAD(0 * 10000000, 15, '0') ||                                                                  --Factores Compensatorio / 7 Decimales
+                                  LPAD(0 * 100, 15, '0') ||                                                                       --Gasto de Cobranza / 2 Decimales
+                                  LPAD(vCodigoCuentaBN, 11, ' ') ||                                                               --C�digo de cuenta
+                                  LPAD(
+                                      SUBSTR(x.NumeroSolicitud, -5, 5) ||
+                                      CASE SUBSTR(x.pago_id, -3, 3) WHEN 'ACT' THEN '1' ELSE '2' END ||
+                                      TO_CHAR(HOY, 'YYMMDD'), 12, '0'
+                                      ) ||                                                                                        --Orden de Cobro (NumeroSolicitud|TipoPago|FechaEnvio) YYMMDD
+                                  LPAD(vTotalAmortizacion * 100, 15, '0') ||                                                      --Saldo
+                                  LPAD(NVL(x.SALDOINTERES,0) * 100, 15, '0') ||                                                   --Interes Compuesto
+                                  LPAD(NVL(x.SALDOMORA,0) * 100, 15, '0') ||                                                      --Interes Moratorio
+                                  LPAD(0 * 100, 15, '0');                                                                         --Importe ITF
+                                  --LPAD('0', 49, '0');                                                                           --Espacios Reservados
+                  --
              IF NVL (vTotalAmortizacion, 0) > 0 THEN
                 IF NVL (x.Monto_Minimo, 0) >= 0
                    AND NVL (x.SALDOCAPITAL, 0) >= 0
@@ -1291,24 +1327,29 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
                    AND NVL (x.REAJUSTE, 0) >= 0
                 THEN
                     IF x.Tipoproducto <> 'PTP' THEN
-                       vTotalAdeudado := vTotalAdeudado + vMontoadeudado;
-                       vTotalMinimo   := vTotalMinimo + vminimo;
-                       vConteoTotal   :=  vConteoTotal + 1;
-                       vSumaDetalle := vSumaDetalle + vMontoadeudado;
-                       --
-                       INSERT INTO recaudafinanciero (campo) VALUES (vDetallefin);
-                       INSERT INTO recaudacontinental ( campo ) VALUES (vDetalle);
-                       INSERT INTO recaudaCREDITO ( campo ) VALUES ( vDetalleCREDITO );
-                       INSERT INTO recaudaScotiabank ( campo ) VALUES ( vDetalleScotiabank );
-                        IF NVL(vMontoadeudado, 0) < 10000000 THEN
-                        
-                          IF PIMONEDA = 1 THEN
-                            INSERT INTO recaudainterbankSoles ( tipo, campo ) VALUES ( 2, vDetalleIBK );
-                          ELSE
-                            INSERT INTO recaudainterbankDolares ( tipo, campo ) VALUES ( 2, vDetalleIBK );
-                          END IF;
+                      vTotalAdeudado := vTotalAdeudado + vMontoadeudado;
+                      vTotalMinimo   := vTotalMinimo + vminimo;
+                      vConteoTotal   :=  vConteoTotal + 1;
+                      vSumaDetalle := vSumaDetalle + vMontoadeudado;
+                      --
+                      INSERT INTO recaudafinanciero (campo) VALUES (vDetallefin);
+                      INSERT INTO recaudacontinental ( campo ) VALUES (vDetalle);
+                      INSERT INTO recaudaCREDITO ( campo ) VALUES ( vDetalleCREDITO );
+                      INSERT INTO recaudaScotiabank ( campo ) VALUES ( vDetalleScotiabank );
+                      IF NVL(vMontoadeudado, 0) < 10000000 THEN
+                        IF PIMONEDA = 1 THEN
+                          INSERT INTO recaudainterbanksoles ( tipo, campo ) VALUES ( 2, vDetalleIBK );
+                        ELSE
+                          INSERT INTO recaudainterbankdolares ( tipo, campo ) VALUES ( 2, vDetalleIBK );
                         END IF;
-                       INSERT INTO recaudaglobokas ( campo ) VALUES ( vDetalleGlobokas );  --GLOBOKAS
+                      END IF;
+
+                      INSERT INTO recaudaglobokas ( campo ) VALUES ( vDetalleGlobokas );
+                      IF PIMONEDA = 1 THEN
+                          INSERT INTO recaudabanconacionsoles ( tipo, campo ) VALUES ( 2, vDetalleBN );
+                      ELSE
+                          INSERT INTO recaudabanconaciondolares ( tipo, campo ) VALUES ( 2, vDetalleBN );
+                      END IF;
                     ELSE
                          BEGIN
                             SELECT CodigoRecaudador,CodigoProyecto
@@ -1459,8 +1500,6 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
     vPlantillaScotiabank VARCHAR2(300):='@VALOR1@@VALOR2@';
     
     vPlantillaGlobokasnet VARCHAR2(300):='@VALOR1@@VALORFECHA@';
-    vPlantillaBn VARCHAR2(300):='@VALOR1@@VALOR2@';
-
 
     --
     CURSOR c_continental IS
@@ -1487,137 +1526,121 @@ PROCEDURE P_GEN_DATOSRECAUDACION( PIFECHA  IN DATE,
     SELECT campo
       FROM recaudaglobokas
      ORDER BY 1 desc;
-     
-    CURSOR c_bn IS
-    SELECT *
-      FROM recaudabn
-     ORDER BY 1 DESC;
 
     BEGIN
-       -- v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
-        --
-        IF PICodigoBanco = 6 THEN
-
+      --
+      IF PICodigoBanco = 6 THEN
         vNombrearchivo := REPLACE(vPlantillaContinental, '@VALOR1@', 'RC');
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR2@', (CASE WHEN PIMonedaBanco = 1 THEN '500' ELSE '600' END));
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR3@', (CASE WHEN PIMonedaBanco = 1 THEN 'S' ELSE 'D' END));
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALORFECHA@', TO_CHAR(HOY,'YYYYMMDD'));
         v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
-           FOR x IN c_continental LOOP
-               --UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(9));
-               UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
-        --
-        IF PICodigoBanco = 9 THEN
+        FOR x IN c_continental LOOP
+          --UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(9));
+          UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
+        END LOOP;
+      END IF;
+      --
+      IF PICodigoBanco = 9 THEN
         vNombrearchivo := REPLACE(vPlantillaFinanciero, '@VALOR1@', (CASE WHEN PIMonedaBanco=1 THEN '27279' ELSE '27533' END));
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALORFECHA@', TO_CHAR(HOY,'YYYYMMDD'));
         v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
-           FOR x IN c_financiero LOOP
-               UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
-        --
-        IF PICodigoBanco = 3 THEN
+        FOR x IN c_financiero LOOP
+            UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
+        END LOOP;
+      END IF;
+      --
+      IF PICodigoBanco = 3 THEN
         vNombrearchivo := REPLACE(vPlantillaBcp, '@VALOR1@', 'CREP');
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR2@', (CASE WHEN PIMonedaBanco=1 THEN '6221' ELSE  '6220' END));
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR3@', (CASE WHEN PIMonedaBanco=1 THEN '3001' ELSE  '3002' END));
         v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
 
-           FOR x IN c_credito LOOP
-                UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
+        FOR x IN c_credito LOOP
+          UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
+        END LOOP;
+      END IF;
 
-        IF PICodigoBanco = 5 THEN
+      IF PICodigoBanco = 5 THEN
         vNombrearchivo := REPLACE(vPlantillaScotiabank, '@VALOR1@', 'COOPAH');
         vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR2@', (CASE WHEN PIMonedaBanco=1 THEN 'SO' ELSE  'DO' END));
         v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
 
-           FOR x IN c_scotiabank LOOP
-                UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
+        FOR x IN c_scotiabank LOOP
+          UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
+        END LOOP;
+      END IF;
 
-        --Globokasnet / no es un banco
-         IF PICodigoBanco = 16969 THEN
+      --Globokasnet / no es un banco
+      IF PICodigoBanco = 16969 THEN
         vNombrearchivo := REPLACE(vPlantillaGlobokasnet, '@VALOR1@', 'SCB33');
-          vNombrearchivo :=REPLACE(vNombrearchivo, '@VALORFECHA@', TO_CHAR(HOY, 'MMDD'));
+        vNombrearchivo :=REPLACE(vNombrearchivo, '@VALORFECHA@', TO_CHAR(HOY, 'MMDD'));
         v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
 
-           FOR x IN c_globokasnet LOOP
-                UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
-        --
+        FOR x IN c_globokasnet LOOP
+          UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
+        END LOOP;
+      END IF;
+      --
 
-         IF PICodigoBanco = 2 THEN
-        vNombrearchivo := REPLACE(vPlantillaBn, '@VALOR1@', 'COOPAH');
-        vNombrearchivo := REPLACE(vNombrearchivo, '@VALOR2@', (CASE WHEN PIMonedaBanco=1 THEN 'SO' ELSE  'DO' END));
-        v_archivo := UTL_FILE.FOPEN(vDirectorio,vNombrearchivo||'.TXT','W');
-
-           FOR x IN c_bn LOOP
-                UTL_FILE.PUT_LINE(v_archivo,x.campo||CHR(13));
-           END LOOP;
-        END IF;
-        --
-
-        UTL_FILE.FCLOSE(v_archivo);
+      UTL_FILE.FCLOSE(v_archivo);
     EXCEPTION WHEN OTHERS THEN
-                   UTL_FILE.FCLOSE(v_archivo);
-        DBMS_OUTPUT.PUT_LINE('ERROR GENERAR TXT IDBANCO:' ||PICodigoBanco||' IDMONEDA:' ||PIMonedaBanco);
+      UTL_FILE.FCLOSE(v_archivo);
+      DBMS_OUTPUT.PUT_LINE('ERROR GENERAR TXT IDBANCO:' ||PICodigoBanco||' IDMONEDA:' ||PIMonedaBanco);
     END P_GEN_ARCHIVOTXT;
     --
 PROCEDURE P_GEN_GENERARARCHIVOS (PIFECHA IN DATE) IS
 
-CURSOR moneda IS
-SELECT tblcodarg
-  FROM  SYST900
- WHERE tblcodtab=22;
+  CURSOR moneda IS
+  SELECT tblcodarg
+    FROM SYST900
+   WHERE tblcodtab=22;
 
 
-CURSOR banco IS
-SELECT tblcodarg
-  FROM  SYST900
- WHERE tblcodtab=39
- AND tblcodarg IN(2,3,6,9,5);
+  CURSOR banco IS
+  SELECT tblcodarg
+    FROM SYST900
+   WHERE tblcodtab=39
+    AND tblcodarg IN(3,6,9,5);
 
-vError NUMBER;
+  vError NUMBER;
 
 BEGIN
 
-    FOR m IN moneda LOOP 
+  FOR m IN moneda LOOP 
  
-  Pkg_RecaudacionEnvio.P_Gen_DatosRecaudacion( TRUNC(PIFECHA), m.tblcodarg, vError);
+    Pkg_RecaudacionEnvio.P_Gen_DatosRecaudacion( TRUNC(PIFECHA), m.tblcodarg, vError);
       
-      IF vError=1 THEN
+    IF vError=1 THEN
       dbms_output.put_line('ERROR AL PROCESAR');
-      ELSE
+    ELSE
       COMMIT;
-      END IF;
- 
-      FOR b IN banco LOOP 
-      
-       Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXT(b.tblcodarg,m.tblcodarg);
-     
-       END LOOP;
-      
-      --Globokasnet / no es un banco
-      IF m.tblcodarg=1 THEN
-        Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXT(16969,m.tblcodarg);
-      End If;
+    END IF;
+
+    FOR b IN banco LOOP 
+    
+      Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXT(b.tblcodarg,m.tblcodarg);
+    
+      END LOOP;
+    
+    --Globokasnet / no es un banco
+    IF m.tblcodarg=1 THEN
+      Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXT(16969,m.tblcodarg);
+    End If;
 END LOOP;
 
   --Proceso Especifico InterBank
-  Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXT_IBK(); --Archivo TXT Bimoneda
+  Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXTIBK(); --Archivo TXT Bimoneda
+  --
+  --Proceso Especifico BancoNacion
+  Pkg_RecaudacionEnvio.P_GEN_ARCHIVOTXTBN(); --Archivo TXT Bimoneda
   --
    
 END P_GEN_GENERARARCHIVOS;
 
-PROCEDURE P_GEN_ARCHIVOTXT_IBK IS
+PROCEDURE P_GEN_ARCHIVOTXTIBK IS
   v_archivo      UTL_FILE.FILE_TYPE;
   vDirectorio    VARCHAR2(500):='RECAUDABANCOS';
-  vNombrearchivo VARCHAR2(500):=' ' ;
   vPlantillaInterbank VARCHAR2(300):='@VALOR1@@VALOR2@@VALOR3@@VALOR4@';
 
   vTotalImporteSoles    NUMBER(15,2);
@@ -1645,32 +1668,32 @@ PROCEDURE P_GEN_ARCHIVOTXT_IBK IS
   --Fin Datos IBK--
 
   CURSOR cIBK IS
-  SELECT CAMPO FROM RECAUDAINTERBANKSOLES WHERE TIPO = 2
+  SELECT CAMPO FROM recaudainterbanksoles WHERE TIPO = 2
   UNION ALL
-  SELECT CAMPO FROM RECAUDAINTERBANKDOLARES WHERE TIPO = 2;
+  SELECT CAMPO FROM recaudainterbankdolares WHERE TIPO = 2;
 
 BEGIN
-  SELECT CAMPO INTO vTotalImporteSoles FROM RECAUDAINTERBANKSOLES WHERE TIPO = 0;
-  SELECT CAMPO INTO vTotalImporteDolares FROM RECAUDAINTERBANKDOLARES WHERE TIPO = 0;
-  SELECT CAMPO INTO vTotalRegistroSoles FROM RECAUDAINTERBANKSOLES WHERE TIPO = 1;
-  SELECT CAMPO INTO vTotalRegistroDolares FROM RECAUDAINTERBANKDOLARES WHERE TIPO = 1;
+  SELECT CAMPO INTO vTotalImporteSoles FROM recaudainterbanksoles WHERE TIPO = 0;
+  SELECT CAMPO INTO vTotalImporteDolares FROM recaudainterbankdolares WHERE TIPO = 0;
+  SELECT CAMPO INTO vTotalRegistroSoles FROM recaudainterbanksoles WHERE TIPO = 1;
+  SELECT CAMPO INTO vTotalRegistroDolares FROM recaudainterbankdolares WHERE TIPO = 1;
   
-  vCabeceraIBK := vTipoCabeceraIBK ||                            --Tipo de registro
-                  vCodGrupoIBK ||                                --Código de grupo
-                  vCodRubroIBK ||                                --Código de rubro
-                  vCodEmpresaIBK ||                              --Código de empresa
-                  vCodServicioIBK ||                             --Código de servicio
-                  '01' ||                                     --Código de solicitud
-                  RPAD('PRESTAMO', 30, ' ') ||                --Descripción de solicitud
+  vCabeceraIBK := vTipoCabeceraIBK ||                         --Tipo de registro
+                  vCodGrupoIBK ||                             --Codigo de grupo
+                  vCodRubroIBK ||                             --Codigo de rubro
+                  vCodEmpresaIBK ||                           --Codigo de empresa
+                  vCodServicioIBK ||                          --Codigo de servicio
+                  '01' ||                                     --Codigo de solicitud
+                  RPAD('PRESTAMO', 30, ' ') ||                --Descripcion de solicitud
                   '0' ||                                      --Origen de la Solicitud
-                  '002' ||                                    --Código de requerimiento
-                  '1' ||                                      --Canal de envío
-                  'M' ||                                      --Tipo de información --M: Reemplaza --A:Agrega
-                  LPAD(vTotalRegistroSoles + vTotalRegistroDolares, 15, '0') ||          --Número de registros
-                  vCodUnicoIBK ||                                --Código único
+                  '002' ||                                    --Codigo de requerimiento
+                  '1' ||                                      --Canal de envio
+                  'M' ||                                      --Tipo de informacion --M: Reemplaza --A:Agrega
+                  LPAD(vTotalRegistroSoles + vTotalRegistroDolares, 15, '0') ||          --Numero de registros
+                  vCodUnicoIBK ||                             --Codigo unico
                   TO_CHAR(HOY, 'YYYYMMDD') ||                 --Fecha de proceso
                   '00000000' ||                               --Fecha de Inicio de Cargos
-                  '00' ||                               --Moneda Solo aplica para Pago Automatico, caso contrario 00
+                  '00' ||                                     --Moneda Solo aplica para Pago Automatico, caso contrario 00
                   LPAD(NVL(vTotalImporteSoles, 0), 15, '0') ||
                                                               --Suma Total Soles
                   LPAD(NVL(vTotalImporteDolares, 0), 15, '0') ||
@@ -1679,47 +1702,100 @@ BEGIN
                   LPAD(' ', 50, ' ') ||                       --Glosa General
                   LPAD(' ', 221, ' ') ||                      --Glosa General
                   '02' ||                                     --Tipo Formato
-                  '0000';                                     --Código fijo
+                  '0000';                                     --Codigo fijo
 
   vCuotaIBK :=    vTipoCuotaIBK ||                            --Tipo de registro
-                  '00000000' ||                               --Código de cuota
-                  '1' ||                                      --Número de conceptos
+                  '00000000' ||                               --Codigo de cuota
+                  '1' ||                                      --Numero de conceptos
                   RPAD(UPPER(TRIM(TO_CHAR(HOY, 'MONTH'))), 10, ' ') ||
-                                                              --Descripción del concepto 1
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 2
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 3
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 4
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 5
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 6
-                  LPAD(' ', 10,' ') ||                        --Descripción del concepto 7                
+                                                              --Descripcion del concepto 1
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 2
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 3
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 4
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 5
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 6
+                  LPAD(' ', 10,' ') ||                        --Descripcion del concepto 7                
                   LPAD(' ', 313,' ') ||                       --Libre
                   '02' ||                                     --Tipo Formato
-                  '0000';                                     --Código fijo
+                  '0000';                                     --Codigo fijo
   
-  vNombrearchivo :=REPLACE(vPlantillaInterbank, '@VALOR1@', 'C');
-  vNombrearchivo :=REPLACE(vNombrearchivo, '@VALOR2@', '03');    ---Codigo asignado por el banco
-  vNombrearchivo :=REPLACE(vNombrearchivo, '@VALOR3@', '953');   ---Codigo asignado por el banco
-  vNombrearchivo :=REPLACE(vNombrearchivo, '@VALOR4@', '01');    ---Codigo asignado por el banco
+  vPlantillaInterbank := REPLACE(vPlantillaInterbank, '@VALOR1@', 'C');
+  vPlantillaInterbank := REPLACE(vPlantillaInterbank, '@VALOR2@', '03');    ---Codigo asignado por el banco
+  vPlantillaInterbank := REPLACE(vPlantillaInterbank, '@VALOR3@', '953');   ---Codigo asignado por el banco
+  vPlantillaInterbank := REPLACE(vPlantillaInterbank, '@VALOR4@', '01');    ---Codigo asignado por el banco
   
-  v_archivo := UTL_FILE.FOPEN(vDirectorio, vNombrearchivo||'.TXT','W');
-  --DELETE FROM RECAUDAINTERBANK;
-  COMMIT;
-
+  v_archivo := UTL_FILE.FOPEN(vDirectorio, vPlantillaInterbank||'.TXT','W');
+  
   UTL_FILE.PUT_LINE(v_archivo, vCabeceraIBK||CHR(13));
-  --INSERT INTO RECAUDAINTERBANK (CAMPO) VALUES (vCabeceraIBK);
   UTL_FILE.PUT_LINE(v_archivo, vCuotaIBK||CHR(13));
-  --INSERT INTO RECAUDAINTERBANK (CAMPO) VALUES (vCuotaIBK);
 
   FOR x IN cIBK LOOP 
     UTL_FILE.PUT_LINE(v_archivo, x.campo||CHR(13));
-    --INSERT INTO RECAUDAINTERBANK (CAMPO) VALUES (x.campo);
   END LOOP;
-  --COMMIT;
+
   UTL_FILE.FCLOSE(v_archivo);
 EXCEPTION WHEN OTHERS THEN
   DBMS_OUTPUT.PUT_LINE('ERROR GENERAR TXT IBK BIMONEDA');
   UTL_FILE.FCLOSE(v_archivo);
-END P_GEN_ARCHIVOTXT_IBK;
+END P_GEN_ARCHIVOTXTIBK;
+
+PROCEDURE P_GEN_ARCHIVOTXTBN IS
+--DECLARE
+    v_archivo               UTL_FILE.FILE_TYPE;
+    vDirectorio             VARCHAR2(500)       := 'RECAUDABANCOS';
+    vPlantillaBancoNacion   VARCHAR2(300)       := '@VALOR1@@VALORFECHA@@VALOR2@-@VALOR3@@VALOR4@';
+
+    vTotalImporteSoles      NUMBER(15,2);
+    vTotalImporteDolares    NUMBER(15,2);
+    vTotalRegistroSoles     NUMBER(10);
+    vTotalRegistroDolares   NUMBER(10);
+
+    --Datos BN--
+    vCabeceraBN             VARCHAR2(400);
+    vCodBancoBN             VARCHAR2(3)         := '018';
+    vCodClienteBN           VARCHAR2(4)         := '0100';
+    vTipoRegistroBN         VARCHAR2(2)         := '01';
+    --Fin Datos BN--
+
+    --Cursor Trama
+    CURSOR cBN IS
+    SELECT CAMPO FROM recaudabanconacionsoles WHERE TIPO = 2
+    UNION ALL
+    SELECT CAMPO FROM recaudabanconaciondolares WHERE TIPO = 2;
+
+    BEGIN
+        SELECT CAMPO INTO vTotalImporteSoles FROM recaudabanconacionsoles WHERE TIPO = 0;
+        SELECT CAMPO INTO vTotalImporteDolares FROM recaudabanconaciondolares WHERE TIPO = 0;
+        SELECT CAMPO INTO vTotalRegistroSoles FROM recaudabanconacionsoles WHERE TIPO = 1;
+        SELECT CAMPO INTO vTotalRegistroDolares FROM recaudabanconaciondolares WHERE TIPO = 1;
+
+        vCabeceraBN :=  vCodBancoBN ||                                                     --Codigo Banco
+                        vCodClienteBN ||                                                   --Codigo Cliente
+                        LPAD(vTotalRegistroSoles + vTotalRegistroDolares, 7, '0') ||       --Codigo de rubro
+                        LPAD(NVL(vTotalImporteSoles, 0) * 100, 15, '0') ||                 --Suma Total Soles
+                        LPAD(NVL(vTotalImporteDolares, 0) * 100, 15, '0') ||               --Suma Total Dolares
+                        TO_CHAR(HOY, 'YYYYMMDD') ||                                        --Fecha de proceso
+                        vTipoRegistroBN;                                                   --Tipo Registro
+                        --LPAD(' ', 226, ' ');                                             --Espacios Reservados
+
+        vPlantillaBancoNacion := REPLACE(vPlantillaBancoNacion, '@VALOR1@', 'R');                               --Valor Constante
+        vPlantillaBancoNacion := REPLACE(vPlantillaBancoNacion, '@VALORFECHA@', TO_CHAR(HOY + 1,'YYYYMMDD'));   --Dia siguiente para dar tiempo a cargarlo en el sistema -BN
+        vPlantillaBancoNacion := REPLACE(vPlantillaBancoNacion, '@VALOR2@', '01');                              --Valor Constante
+        vPlantillaBancoNacion := REPLACE(vPlantillaBancoNacion, '@VALOR3@', '100');                             --Codigo Cliente
+        vPlantillaBancoNacion := REPLACE(vPlantillaBancoNacion, '@VALOR4@', '.ING');      	                    --Extension
+
+        v_archivo := UTL_FILE.FOPEN(vDirectorio, vPlantillaBancoNacion,'W');
+        UTL_FILE.PUT_LINE(v_archivo, vCabeceraBN||CHR(13));
+
+        FOR x IN cBN LOOP 
+            UTL_FILE.PUT_LINE(v_archivo, x.campo||CHR(13));
+        END LOOP;
+
+        UTL_FILE.FCLOSE(v_archivo);
+    EXCEPTION WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('ERROR GENERAR TXT BANCO NACION');
+        UTL_FILE.FCLOSE(v_archivo);
+END P_GEN_ARCHIVOTXTBN;
  ---
 END PKG_RECAUDACIONENVIO;
 /

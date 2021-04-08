@@ -7,8 +7,9 @@ CREATE OR REPLACE PACKAGE SISGODBA.PKG_RECAUDACIONENVIO IS
 -- 18.11.2019 - David Chara I. - Ajuste P_GEN_DATOSRECAUDACION para incluir la funcion F_GEN_CADENALIMPIA en los nombres de los socios
 -- 10.01.2020 - David Chara I. - Ajuste en los caracteres del numero de solicitud P_GEN_DATOSRECAUDACION
 -- 25.11.2020 - Kenji Jhoncon - Agregar Recaudacion Interbank y GloboKasnet. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
--- 26.11.2020 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXT_IBK, para poder crear un unico archivo .txt con recaudacion de ambas monedas. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
+-- 26.11.2020 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXTIBK, para poder crear un unico archivo .txt con recaudacion de ambas monedas para Interbank. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
 -- 25.02.2021 - Kenji Jhoncon - Ajuste P_GEN_ARCHIVOTXT, numero servicio Kasnet completar con ceros a la izquierda
+-- 19.03.2021 - Kenji Jhoncon - Creacion de procedure P_GEN_ARCHIVOTXTBN, para poder crear un unico archivo .txt con recaudacion de ambas monedas para Banco de la Nacion. Ajustes en P_GEN_DATOSRECAUDACION, P_GEN_ARCHIVOTXT, P_GEN_GENERARARCHIVOS
 
 FUNCTION F_GET_MONTOADEUDADO ( P_PeriodoSolicitud IN NUMBER,
                                P_NumeroSolicitud  IN NUMBER,
@@ -39,7 +40,9 @@ PROCEDURE P_GEN_ARCHIVOTXT( PICodigoBanco datosbanco.codigobanco%TYPE,
 --
 PROCEDURE P_GEN_GENERARARCHIVOS (PIFECHA IN DATE);
 --
-PROCEDURE P_GEN_ARCHIVOTXT_IBK;
+PROCEDURE P_GEN_ARCHIVOTXTIBK;
+--
+PROCEDURE P_GEN_ARCHIVOTXTBN;
 --
 END PKG_RECAUDACIONENVIO;
 /
